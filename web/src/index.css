@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@import "./styles/uiverse.css";
+
+/* ---------------------------------------------------------------- design tokens */
+:root,
+[data-theme="dark"] {
+  --bg: #0b1220;
+  --bg-2: #0e1729;
+  --panel: #111a2e;
+  --panel-2: #16213a;
+  --border: #1f2a44;
+  --border-2: #2a3758;
+  --text: #e6eaf2;
+  --muted: #8a94a8;
+  --faint: #5b667c;
+  --accent: #4c8dff;
+  --accent-2: #7c5cff;
+  --up: #f04864;
+  --down: #22b07d;
+  --warn: #f5a524;
+  /* module colours, identical to the paper figures */
+  --m-cil: #3b82f6;
+  --m-fce: #2e8b57;
+  --m-sic: #e07b2a;
+  --m-dpl: #8b6cc7;
+  --m-dfl: #e0524a;
+  --m-reg: #d4a017;
+  --grid: rgba(138, 148, 168, 0.12);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg: #f4f6fb;
+  --bg-2: #eef1f7;
+  --panel: #ffffff;
+  --panel-2: #f7f9fc;
+  --border: #e3e8f0;
+  --border-2: #d3dae6;
+  --text: #121a2b;
+  --muted: #5d6880;
+  --faint: #8f99ad;
+  --accent: #2f6fe8;
+  --accent-2: #6a4bdc;
+  --grid: rgba(18, 26, 43, 0.08);
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 24px -16px rgba(16, 24, 40, 0.25);
+  color-scheme: light;
+}
+
+/* green-up convention (setting) */
+[data-updown="green"] {
+  --up: #22b07d;
+  --down: #f04864;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--border);
+  --color-line-2: var(--border-2);
+  --color-ink: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+  --color-cil: var(--m-cil);
+  --color-fce: var(--m-fce);
+  --color-sic: var(--m-sic);
+  --color-dpl: var(--m-dpl);
+  --color-dfl: var(--m-dfl);
+  --color-reg: var(--m-reg);
+  --font-sans: "Inter", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* numbers never jiggle: tabular figures everywhere numeric */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  letter-spacing: -0.01em;
+}
+
+/* thin scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-2) transparent;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--border) 37%, var(--panel-2) 63%);
+  background-size: 400% 100%;
+  animation: skeleton 1.4s ease infinite;
+  border-radius: 8px;
+}
+@keyframes skeleton {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.fade-up {
+  animation: fade-up 0.35s ease both;
+}
+
+/* ---- assistant markdown answers ---- */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0.45em 0; }
+.md h1, .md h2, .md h3 { margin: 0.9em 0 0.35em; font-weight: 600; line-height: 1.35; }
+.md h1 { font-size: 1.08em; }
+.md h2 { font-size: 1.02em; color: var(--accent-2); }
+.md h3 { font-size: 0.96em; }
+.md ul, .md ol { margin: 0.35em 0; padding-left: 1.3em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li { margin: 0.15em 0; }
+.md strong { color: var(--text); font-weight: 600; }
+.md code { font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.92em; padding: 0.05em 0.35em; border-radius: 4px; background: var(--panel); }
+.md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 0.6em 0; font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.md th, .md td { border: 1px solid var(--border); padding: 0.3em 0.55em; text-align: left; white-space: nowrap; }
+.md td { white-space: normal; min-width: 4em; }
+.md th { background: var(--panel); font-weight: 600; }
+.md blockquote { margin: 0.5em 0; padding-left: 0.8em; border-left: 3px solid var(--border); color: var(--muted); }
+.md hr { border: 0; border-top: 1px solid var(--border); margin: 0.8em 0; }

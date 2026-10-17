@@ -1,0 +1,19 @@
+# DeFaCo Studio default configuration
+data:
+  root: data                     # relative to repo root
+  start: "2009-01-01"            # 12-month look-back before the first universe date
+  end: "2025-12-31"
+  universe_start: "2010-01-01"
+  indices: [hs300, zz500]        # BaoStock historical constituents (CSI800 = union)
+universe:
+  min_listing_days: 252          # exclude stocks listed < 1 year
+  min_trading_ratio: 0.8         # >= 80% trading days in the estimation window
+  exclude_st: true
+  window_days: 250
+costs:
+  commission_bps: 2.0            # per side
+  slippage_bps: 0.0
+  stamp_duty_bps_before_20230828: 10.0   # sell side
+  stamp_duty_bps_after_20230828: 5.0
+portfolio:
+  max_weight: 0.10

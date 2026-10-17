@@ -1,0 +1,19 @@
+# M0 robustness (monthly returns, 120-month window): longer history, separate data root
+data:
+  root: data_monthly
+  start: "2003-01-01"
+  end: "2025-12-31"
+  universe_start: "2005-04-01"
+  indices: [hs300]
+universe:
+  min_listing_days: 252
+  min_trading_ratio: 0.8
+  exclude_st: true
+  window_days: 2520
+costs:
+  commission_bps: 2.0
+  slippage_bps: 0.0
+  stamp_duty_bps_before_20230828: 10.0
+  stamp_duty_bps_after_20230828: 5.0
+portfolio:
+  max_weight: 0.10

@@ -1,0 +1,10 @@
+# API service (FastAPI) of DeFaCo Studio; the engine is installed separately: pip install -e packages/quantkit
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+websockets>=12
+python-dotenv>=1.0
+matplotlib>=3.8
+pytdx>=1.72
+pypinyin>=0.50
+pytest>=8
