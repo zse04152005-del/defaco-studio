@@ -48,7 +48,7 @@ DeFaCo Studio 是毕业论文《Decision-Focused, Turnover-Aware Factor Covarian
 | 持仓调仓 | 录入或导入 CSV 持仓 → 按整手生成建议交易单；用实时行情处理**涨停不买、跌停不卖、停牌不动**；资金流向桑基图；导出交易单 |
 | 回测绩效 | T+1 开盘成交、按板块的涨跌停（主板 10%、ST 5%、科创板 / 创业板 20%、北交所 30%）、停牌、退市、成交量上限、最低佣金 5 元、印花税、过户费、平方根冲击成本；PSR / DSR、Sharpe 置信区间；HTML 报告与 CSV 导出 |
 | 监控预警 | 5 条规则（组合波动、偏离目标、区制切换、涨跌停 / 停牌、数据源异常）+ 定时任务，推送到企业微信 / 飞书 / 钉钉 |
-| AI 投研助手 | DeepSeek 驱动；14 个只读工具调用引擎数据；**每个数字自动核验出处**，合规检查（不给目标价、不给买卖指令）；个股深度研报（多空分析师 + 风控主编） |
+| AI 投研助手 | **支持任意 OpenAI 兼容的大模型**（DeepSeek、OpenAI、通义千问、Kimi、智谱 GLM、SiliconFlow、OpenRouter、本地 Ollama 等，需支持工具调用）；14 个只读工具调用引擎数据；**每个数字自动核验出处**，合规检查（不给目标价、不给买卖指令）；个股深度研报（多空分析师 + 风控主编） |
 | 论文实验室 | 展示论文方法与消融实验（论文结果答辩后发布） |
 
 ## 截图
@@ -94,8 +94,11 @@ DeFaCo Studio 是毕业论文《Decision-Focused, Turnover-Aware Factor Covarian
    cd web && npm ci && cd ..
 
 6. 配置：cp .env.example .env
-   AI 投研助手需要 DeepSeek API Key。先问我要不要配置：如果我给你 Key，只把它写进 .env 的 DEEPSEEK_API_KEY=，
-   不要在回复里复述、不要提交到 git、不要发送到任何其他地方；如果我不需要，就在 .env 里设置 ASSISTANT_ENABLED=0。
+   AI 投研助手可以接任意 OpenAI 兼容的大模型（需支持工具调用）。先问我要不要配置、用哪家：
+   LLM_PROVIDER 可选 deepseek / openai / qwen / moonshot / zhipu / siliconflow / openrouter / ollama（本地，无需 Key）/ custom；
+   除 DeepSeek 外还要问我模型名，写入 LLM_MODEL（custom 还要 LLM_BASE_URL）。
+   如果我给你 API Key，只把它写进 .env 的 LLM_API_KEY=，不要在回复里复述、不要提交到 git、不要发送到任何其他地方；
+   如果我不需要 AI 助手，就在 .env 里设置 ASSISTANT_ENABLED=0。
 
 7. 启动：bash scripts/dev.sh
    （后端 http://127.0.0.1:8000，前端 http://127.0.0.1:5173；Windows 无 bash 时分两个终端运行：
@@ -157,9 +160,32 @@ bash scripts/dev.sh
 
 ## AI 投研助手配置
 
-1. 在 `.env` 中填写 `DEEPSEEK_API_KEY`（`.env` 已被 git 忽略，状态接口也不会返回 Key）。
-2. 可选：`DEEPSEEK_MODEL`、`DEEPSEEK_MODEL_PRO` 指定模型；`ASSISTANT_ENABLED=0` 完全关闭助手。
-3. 发送给模型服务的只有问题、页面上下文和引擎汇总数据，**不含持仓股数与金额**；回答中的每个数字都会在工具结果中核验出处，界面显示「数字核验 x/y」。
+助手通过 OpenAI 兼容的 `/chat/completions` 接口调用大模型，**任何支持工具（function）调用的模型都可以使用**。在 `.env` 中设置：
+
+```ini
+LLM_PROVIDER=deepseek      # deepseek | openai | qwen | moonshot | zhipu | siliconflow | openrouter | ollama | custom
+LLM_API_KEY=你的 Key        # 本地 Ollama 不需要
+LLM_MODEL=                 # 模型名：DeepSeek 有默认值，其他服务商必须填写
+LLM_MODEL_PRO=             # 可选：研报主编用的模型（默认同 LLM_MODEL）
+LLM_BASE_URL=              # 可选：覆盖默认接口地址；custom 必填
+```
+
+| `LLM_PROVIDER` | 服务 | 默认接口地址 |
+|---|---|---|
+| `deepseek`（默认） | DeepSeek | `https://api.deepseek.com` |
+| `openai` | OpenAI | `https://api.openai.com/v1` |
+| `qwen` | 通义千问（阿里云百炼 / DashScope 兼容模式） | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| `moonshot` | Kimi（月之暗面） | `https://api.moonshot.cn/v1` |
+| `zhipu` | 智谱 GLM | `https://open.bigmodel.cn/api/paas/v4` |
+| `siliconflow` | SiliconFlow 硅基流动 | `https://api.siliconflow.cn/v1` |
+| `openrouter` | OpenRouter（聚合多家模型） | `https://openrouter.ai/api/v1` |
+| `ollama` | 本地 Ollama（无需 Key） | `http://127.0.0.1:11434/v1` |
+| `custom` | 其他 OpenAI 兼容接口（vLLM、LM Studio、企业网关等） | 由 `LLM_BASE_URL` 指定 |
+
+- 接口地址和模型名以各服务商文档为准；模型必须支持工具调用，否则助手无法查询引擎数据。
+- 只有 DeepSeek 会收到其专有参数（推理强度、关闭思考）；其他服务商收到标准请求。旧的 `DEEPSEEK_API_KEY` 等变量仍然有效。
+- `.env` 已被 git 忽略，状态接口也不会返回 Key；`ASSISTANT_ENABLED=0` 可完全关闭助手，其余功能不受影响。
+- 发送给模型服务商的只有问题、页面上下文和引擎汇总数据，**不含持仓股数与金额**；回答中的每个数字都会在工具结果中核验出处，界面显示「数字核验 x/y」。
 
 监控推送的 Webhook（企业微信 / 飞书 / 钉钉）可以在「监控预警」页填写（保存在本地 `state/monitor.json`），也可以写在 `.env`。
 
@@ -172,7 +198,7 @@ Web 前端（React 19 + TypeScript + Vite + Tailwind；ECharts、TradingView Lig
    │
 引擎层 quantkit：点时数据面板、风险模型注册表、优化器、回测器、因子库与检验
    │
-数据源：BaoStock、AkShare、腾讯 / 新浪实时行情、DeepSeek API
+数据源：BaoStock、AkShare、腾讯 / 新浪实时行情、大模型 API（OpenAI 兼容）
 ```
 
 | 路径 | 内容 |
@@ -200,7 +226,7 @@ cd web && npx tsc --noEmit                                           # 前端类
 - **端口被占用**：`dev.sh` 使用 8000 和 5173 端口，先关闭占用它们的程序。
 - **「研究数据未就绪」**：还没有下载研究数据，见[研究数据](#研究数据)；其余页面使用演示数据照常工作。
 - **看不到 DeFaCo 选项 / 论文实验室没有内容**：论文模型参数和实验结果尚未公开，将在论文答辩后发布。
-- **AI 助手不可用**：检查 `.env` 中的 `DEEPSEEK_API_KEY`，修改后重启后端。
+- **AI 助手不可用**：助手面板会显示具体原因（缺 Key、缺模型名或接口地址）；检查 `.env` 中的 `LLM_PROVIDER`、`LLM_API_KEY`、`LLM_MODEL`，修改后重启后端。
 - **行情显示延迟或缺失**：公开行情接口可能限流或变动，稍后重试；非交易时间显示最近收盘价。
 
 ## 许可证

@@ -19,7 +19,7 @@ from typing import Any, AsyncIterator
 
 from ..realtime import session_status
 from .guard import DISCLAIMER, check_compliance, check_numbers
-from .llm import DeepSeek, LLMError
+from .llm import ChatClient, LLMError
 from .tools import SOURCE_LABEL, Toolbox, call_tool, openai_tools
 
 MAX_ROUNDS = 5
@@ -84,7 +84,7 @@ def _finish(answer: str, evidence: list[Any], used: list[str], usage: dict) -> d
             "disclaimer": DISCLAIMER, "usage": usage}
 
 
-async def run_chat(llm: DeepSeek, box: Toolbox, history: list[dict], ctx: dict | None) -> AsyncIterator[dict]:
+async def run_chat(llm: ChatClient, box: Toolbox, history: list[dict], ctx: dict | None) -> AsyncIterator[dict]:
     msgs: list[dict] = [{"role": "system", "content": system_prompt(ctx)}]
     msgs += [{"role": m["role"], "content": str(m["content"])[:4000]} for m in history[-12:]
              if m.get("role") in ("user", "assistant") and m.get("content")]
@@ -156,7 +156,7 @@ EDITOR = """你是风控主编。把数据与多空双方观点整合成一份�
 规则：所有数字必须来自给定数据；关键数字后标注【来源】；不得给目标价、买卖价位或仓位指令。"""
 
 
-async def run_report(llm: DeepSeek, box: Toolbox, code: str, ctx: dict | None) -> AsyncIterator[dict]:
+async def run_report(llm: ChatClient, box: Toolbox, code: str, ctx: dict | None) -> AsyncIterator[dict]:
     yield {"type": "stage", "key": "data", "status": "start", "label": "收集数据"}
     plan = [("get_stock_analysis", {"code": code}), ("get_realtime_quotes", {"codes": [code]}), ("get_market_overview", {})]
     for i, (n, a) in enumerate(plan):

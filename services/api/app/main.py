@@ -33,7 +33,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .assistant.agent import guarded, run_chat, run_report
-from .assistant.llm import DeepSeek
+from .assistant.llm import ChatClient
 from .assistant.tools import Toolbox
 from .backtest import BacktestService, public, returns_csv
 from .factors import FactorService
@@ -45,7 +45,7 @@ from .realtime import INDICES, MarketData, session_status
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("api")
 md: MarketData | None = None
-llm: DeepSeek | None = None
+llm: ChatClient | None = None
 pf: PortfolioEngine | None = None             # research panel, loaded once in the background
 pf_task: asyncio.Future | None = None
 mon: Monitor | None = None
@@ -63,7 +63,7 @@ def _load_portfolio_engine() -> None:
 async def lifespan(_: FastAPI):
     global md, llm, pf_task, mon, bt, fs
     md = MarketData()
-    llm = DeepSeek()
+    llm = ChatClient()
     pf_task = asyncio.ensure_future(asyncio.to_thread(_load_portfolio_engine))  # quotes are served meanwhile
     mon = Monitor(md, lambda: pf)
     from quantkit.config import load_settings
@@ -126,7 +126,7 @@ def _sse(gen):
 async def assistant_status():
     c = llm.cfg
     return {"ready": c.ready, "enabled": c.enabled, "has_key": bool(c.api_key), "model": c.model, "model_pro": c.model_pro,
-            "provider": "DeepSeek"}
+            "provider": c.label, "provider_id": c.provider, "problem": c.problem}
 
 
 @app.post("/api/assistant/chat")

@@ -308,7 +308,7 @@ export function AssistantDrawer() {
           <div className="text-sm font-semibold">AI 投研助手</div>
           <div className="flex items-center gap-1.5 text-[10.5px] text-faint">
             <i className={clsx("h-1.5 w-1.5 rounded-full", status?.ready ? "bg-[#22b07d]" : "bg-[#f0a020]")} />
-            <span title={status?.ready ? `问答 ${status.model} · 研报主编 ${status.model_pro}` : undefined}>{status ? (status.ready ? `DeepSeek · ${status.model}` : "未配置 API Key") : "连接中…"}</span>
+            <span title={status?.ready ? `问答 ${status.model} · 研报主编 ${status.model_pro}` : undefined}>{status ? (status.ready ? `${status.provider ?? "大模型"} · ${status.model}` : "未配置大模型") : "连接中…"}</span>
           </div>
         </div>
         <button
@@ -341,7 +341,7 @@ export function AssistantDrawer() {
       <div className={clsx("flex-1 space-y-4 overflow-y-auto p-4", showHistory && "hidden")}>
         {notReady && (
           <div className="rounded-xl border border-[#f0a020]/40 bg-[#f0a020]/10 p-3 text-[12px]">
-            未检测到 DeepSeek API Key。在仓库根目录的 <code>.env</code> 中设置 <code>DEEPSEEK_API_KEY</code> 后重启 API 服务。
+            {status?.problem ?? "未配置大模型。"} 在仓库根目录的 <code>.env</code> 中设置 <code>LLM_PROVIDER</code>、<code>LLM_API_KEY</code>（可选 <code>LLM_MODEL</code>）后重启 API 服务；支持 DeepSeek、OpenAI、通义千问、Kimi、智谱 GLM、SiliconFlow、OpenRouter、本地 Ollama 及其他 OpenAI 兼容接口。
           </div>
         )}
         {msgs.map((m) =>
@@ -398,7 +398,7 @@ export function AssistantDrawer() {
           )}
         </div>
         <p className="mt-1.5 text-[10px] text-faint">
-          发送给 DeepSeek 的只有问题、页面上下文、自选 / 候选池 / 持仓的股票名称和引擎汇总数据；持仓股数与金额只留在本地服务。仅供研究与教学。
+          发送给{status?.provider ?? "大模型服务商"}的只有问题、页面上下文、自选 / 候选池 / 持仓的股票名称和引擎汇总数据；持仓股数与金额只留在本地服务。仅供研究与教学。
         </p>
       </div>
     </div>

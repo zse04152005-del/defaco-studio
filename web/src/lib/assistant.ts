@@ -77,6 +77,8 @@ interface Status {
   has_key: boolean;
   model: string;
   model_pro: string;
+  provider?: string;
+  problem?: string | null;
 }
 
 interface AssistantState {
