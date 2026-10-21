@@ -54,11 +54,12 @@ class MarketPanel:
         # carry prices through suspensions, but never past a stock's last bar (delisting)
         alive = raw_close.notna().cumsum().where(raw_close[::-1].notna().cumsum()[::-1] > 0) > 0
         close = raw_close.ffill().where(alive)
+        # BaoStock: turnover% = volume / float shares. Sina bars (Beijing exchange, fallback) carry the float
+        # shares directly; use them where present and the BaoStock estimate elsewhere, so mixed sources work.
+        vol, turn = wide("volume"), wide("turn")
+        shares = (vol / (turn / 100.0)).where(turn > 0)
         if "float_shares" in bars and bars["float_shares"].notna().any():
-            shares = wide("float_shares")
-        else:  # BaoStock: turnover% = volume / float shares
-            vol, turn = wide("volume"), wide("turn")
-            shares = (vol / (turn / 100.0)).where(turn > 0)
+            shares = wide("float_shares").combine_first(shares)
         float_mcap = (close * shares.ffill()).where(alive)
         valuation = {c: wide(c) for c in ("peTTM", "pbMRQ", "psTTM", "pcfNcfTTM") if c in bars}
         panel = cls(dates=dates, codes=codes, ret=ret, close=close, preclose=wide("preclose"), open=wide("open").where(tradestatus > 0),

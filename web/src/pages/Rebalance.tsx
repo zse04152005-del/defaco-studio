@@ -1,11 +1,11 @@
 import clsx from "clsx";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download, Trash2 } from "lucide-react";
 import type { EChartsOption } from "echarts";
 import { useData, type Portfolio, type Security } from "../lib/data";
 import { modelOptions, paramsFrom, useDefacoAvailable, useLivePortfolio, usePortfolioSettings } from "../lib/portfolio";
 import { useQuotes, useRT, type Quote } from "../lib/realtime";
-import { useLists } from "../lib/securities";
+import { syncPaperAccount, useLists, usePaper } from "../lib/securities";
 import { cssVar } from "../lib/store";
 import { pct } from "../lib/format";
 import { EChart } from "../components/charts/EChart";
@@ -35,6 +35,18 @@ function roundLot(shares: number, star: boolean) {
   return Math.floor(shares / 100) * 100;
 }
 
+/** Answer of POST /api/portfolio/rebalance: the whole-lot search (quantkit.optim.lots). */
+interface LotRow {
+  code: string; name: string; industry: string; price: number; held: number; target_shares: number; trade: number;
+  value: number; w_cur: number; w_star: number; w_after: number; freeze: string | null;
+}
+interface LotPlan {
+  asof: string; mode: "opening" | "rebalance"; rows: LotRow[]; notes: string[];
+  summary: { nav: number; invested: number; buys: number; sells: number; commission: number; stamp: number; cash_after: number;
+             extra_capital: number; turnover: number; spend_ratio: number; n_orders: number; n_holdings: number;
+             vol_before: number | null; vol_after: number | null; vol_target: number; te: number };
+}
+
 export default function Rebalance() {
   const { data: port, loading } = useData<Portfolio>("portfolio.json");
   const { data: secs } = useData<{ items: Security[] }>("securities.json");
@@ -47,6 +59,7 @@ export default function Rebalance() {
   const targetLabel = live.data?.label ?? port?.models[model]?.label ?? model;
   // holdings and cash persist in the browser and are shared with the stock page's 持仓 tab
   const { holdings: pos, setHoldings: setPos, cash, setCash } = useLists();
+  const paper = usePaper((s) => s.paper);       // the paper-trading account, when one was exported
   const [newCode, setNewCode] = useState("");
 
   const [useLive, setUseLive] = useState(true);
@@ -66,7 +79,36 @@ export default function Rebalance() {
     return m;
   }, [secs, quotes, useLive]);
 
-  const plan = useMemo(() => {
+  // whole-lot search on the server (same rule as the paper-trading test); the floor rounding below is the offline fallback
+  const lotReq = useMemo(() => {
+    if (!targetW || !secs || live.source !== "live") return null;
+    const prices: Record<string, number> = {};
+    const frozenBuy: string[] = [], frozenSell: string[] = [];
+    for (const c of liveCodes) {
+      const s = sec.get(c);
+      if (s?.close) prices[c] = s.close;
+      const fz = useLive && useFreeze ? freezeOf(quotes[c], sessionOpened) : null;
+      if (fz === "suspended" || fz === "limit_up") frozenBuy.push(c);
+      if (fz === "suspended" || fz === "limit_down") frozenSell.push(c);
+    }
+    return JSON.stringify({ ...paramsFrom(settings, model), holdings: pos, cash, prices, frozen_buy: frozenBuy, frozen_sell: frozenSell });
+  }, [targetW, secs, live.source, liveCodes, sec, quotes, useLive, useFreeze, sessionOpened, settings, model, pos, cash]);
+  const [lot, setLot] = useState<{ key: string; plan: LotPlan | null; error: string | null } | null>(null);
+  useEffect(() => {
+    if (!lotReq) return;
+    let stale = false;
+    const t = setTimeout(() => {
+      fetch("/api/portfolio/rebalance", { method: "POST", headers: { "Content-Type": "application/json" }, body: lotReq })
+        .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error((await r.json().catch(() => null))?.detail ?? `HTTP ${r.status}`))))
+        .then((plan: LotPlan) => !stale && setLot({ key: lotReq, plan, error: null }))
+        .catch((e: Error) => !stale && setLot({ key: lotReq, plan: null, error: e.message }));
+    }, 400);
+    return () => { stale = true; clearTimeout(t); };
+  }, [lotReq]);
+  const lotPlan = lot?.key === lotReq ? lot.plan : null;
+  const lotPending = !!lotReq && lot?.key !== lotReq;
+
+  const floorPlan = useMemo(() => {
     if (!targetW || !secs) return null;
     const target = targetW;
     const cur = pos.filter((p) => sec.has(p.code)).map((p) => ({ ...p, price: sec.get(p.code)!.close }));
@@ -81,7 +123,7 @@ export default function Rebalance() {
       // frozen: no buying at limit-up, no selling at limit-down, nothing while suspended
       const blocked = fz === "suspended" || (fz === "limit_up" && ideal > 0) || (fz === "limit_down" && ideal < 0);
       const trade = blocked ? 0 : ideal;
-      return { code, name: s.name, industry: s.industry, price: s.close, held, wCur: (held * s.close) / nav, w, tgtShares: held + trade, trade,
+      return { code, name: s.name, industry: s.industry, price: s.close, held, wCur: (held * s.close) / nav, w, wStar: w, tgtShares: held + trade, trade,
                value: trade * s.close, freeze: fz, blocked, ideal, star: s.board === "STAR" };
     });
     // frozen sells raise no cash: scale the remaining buys down to what the account can pay for
@@ -105,6 +147,21 @@ export default function Rebalance() {
     return { rows: rows.sort((a, b) => Math.abs(b.value) - Math.abs(a.value) || Number(b.blocked) - Number(a.blocked)), nav, buys, sells, commission, stamp,
              cashLeft: nav - invested - commission - stamp, turnover: (buys + sells) / nav, frozen, scale };
   }, [port, secs, pos, cash, model, sec, quotes, useLive, useFreeze, sessionOpened]);
+
+  // the page's plan: the whole-lot answer when the API has one, else the floor rounding
+  const plan = useMemo(() => {
+    if (!lotPlan) return floorPlan;
+    const S = lotPlan.summary;
+    const FZ: Record<string, Freeze> = {};
+    for (const r of lotPlan.rows) FZ[r.code] = useLive && useFreeze ? freezeOf(quotes[r.code], sessionOpened) : null;
+    const rows = lotPlan.rows.map((r) => ({
+      code: r.code, name: r.name, industry: r.industry, price: r.price, held: r.held, wCur: r.w_cur, w: r.w_after, wStar: r.w_star,
+      tgtShares: r.target_shares, trade: r.trade, value: r.value, freeze: FZ[r.code], blocked: false, ideal: r.trade,
+      star: r.code.startsWith("688"),
+    }));
+    return { rows, nav: S.nav, buys: S.buys, sells: S.sells, commission: S.commission, stamp: S.stamp, cashLeft: S.cash_after,
+             turnover: S.turnover, frozen: [] as typeof rows, scale: 1 };
+  }, [lotPlan, floorPlan, quotes, useLive, useFreeze, sessionOpened]);
 
   if (loading || !port || !plan) return <div className="grid h-96 place-items-center"><InfinityLoader label="生成交易单" /></div>;
 
@@ -175,6 +232,23 @@ export default function Rebalance() {
         }
       />
       <DataBanner note="仅生成交易单，不连接任何券商下单接口。" />
+      <div className="mb-4 rounded-xl border border-line bg-panel px-4 py-2.5 text-[12px] leading-5 text-muted">
+        {lotPlan ? (
+          <>
+            <b className="text-ink">整手搜索</b>（与模拟交易同一规则）：{lotPlan.notes[0]}。
+            {lotPlan.summary.vol_before != null && <> 预测年化波动 {pct(lotPlan.summary.vol_before, 2)} → </>}
+            {lotPlan.summary.vol_after != null && <>{lotPlan.summary.vol_before == null && "预测年化波动 "}{pct(lotPlan.summary.vol_after, 2)}</>}
+            （理想连续权重 {pct(lotPlan.summary.vol_target, 2)}）；持股 {lotPlan.summary.n_holdings} 只，交易 {lotPlan.summary.n_orders} 笔
+            {lotPlan.mode === "opening" && <>；花费 {pct(lotPlan.summary.spend_ratio, 1)}{lotPlan.summary.extra_capital > 0 && `，需追加 ${(lotPlan.summary.extra_capital / 1e4).toFixed(2)} 万`}</>}
+            {lotPlan.notes.slice(1).map((n) => `；${n}`)}。
+          </>
+        ) : (
+          <>
+            <b className="text-ink">{lotPending ? "整手搜索计算中…" : "向下取整（离线）"}</b>
+            {!lotPending && (lot?.error ? `：整手搜索不可用（${lot.error}），` : "：后端未连接，") + "按目标权重逐只向下取整到整手，余额留作现金。"}
+          </>
+        )}
+      </div>
       {useLive && useFreeze && (plan.frozen.length > 0 || plan.scale < 1) && (
         <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-4 py-2.5 text-[12px]">
           <b>交易限制已生效</b>（依据 {session?.label ?? "最新"} 实时行情）：
@@ -189,10 +263,18 @@ export default function Rebalance() {
         <Stat label="卖出金额" value={<span className="text-down">{(plan.sells / 1e4).toFixed(2)} 万</span>} />
         <Stat label="换手率" value={pct(plan.turnover, 1)} />
         <Stat label="交易成本" value={`${(plan.commission + plan.stamp).toFixed(0)} 元`} hint={`佣金 ${plan.commission.toFixed(0)} · 印花税 ${plan.stamp.toFixed(0)}`} />
-        <Stat label="调仓后现金" value={`${(plan.cashLeft / 1e4).toFixed(2)} 万`} hint="整手取整后的余额" />
+        <Stat label="调仓后现金" value={`${(plan.cashLeft / 1e4).toFixed(2)} 万`} hint={lotPlan ? (plan.cashLeft < 0 ? "负数为需追加的资金（开仓可多花至 110%）" : "整手搜索后的余额") : "整手取整后的余额"} />
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
-        <Panel title="当前持仓" actions={<UploadButton>导入 CSV</UploadButton>} bodyClass="p-3">
+        <Panel title="当前持仓" actions={paper ? <UploadButton onClick={() => void syncPaperAccount(true)}>载入模拟盘</UploadButton> : <UploadButton>导入 CSV</UploadButton>} bodyClass="p-3">
+          {paper && (
+            <div className="mb-3 rounded-lg border border-line bg-bg-2 px-2.5 py-2 text-[11px] leading-5 text-muted">
+              <div className="text-ink">{paper.label}</div>
+              <div className="num">建仓 {paper.opened} · 最近交易 {paper.last_trade} · 估值 {paper.valued}</div>
+              <div className="num">投入 {(paper.capital / 1e4).toFixed(2)} 万 · 总资产 {(paper.nav / 1e4).toFixed(2)} 万（{pct(paper.nav / paper.capital - 1, 2)}）</div>
+              <div className="text-faint">纸面模拟，不构成投资建议；编辑后点“载入模拟盘”可恢复</div>
+            </div>
+          )}
           <label className="mb-3 flex items-center gap-2 text-xs text-muted">
             可用现金
             <input type="number" value={cash} step={10000} onChange={(e) => setCash(Math.max(0, +e.target.value))} className="num h-8 flex-1 rounded-lg border border-line bg-bg-2 px-2 text-ink outline-none focus:border-accent" />
@@ -231,7 +313,7 @@ export default function Rebalance() {
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-panel text-left text-faint">
               <tr className="border-b border-line">
-                {["代码", "名称", "行业", "参考价", "当前股数", "当前权重", "目标权重", "目标股数", "交易", "金额"].map((h, i) => (
+                {["代码", "名称", "行业", "参考价", "当前股数", "当前权重", "模型权重", "整手后权重", "目标股数", "交易", "金额"].map((h, i) => (
                   <th key={h} className={clsx("py-2 font-medium", i === 0 ? "px-4" : "px-2", i >= 3 && "text-right")}>{h}</th>
                 ))}
               </tr>
@@ -252,6 +334,7 @@ export default function Rebalance() {
                   <td className="num px-2 py-1.5 text-right">{r.price.toFixed(2)}</td>
                   <td className="num px-2 py-1.5 text-right text-muted">{r.held}</td>
                   <td className="num px-2 py-1.5 text-right text-muted">{pct(r.wCur, 1)}</td>
+                  <td className="num px-2 py-1.5 text-right text-muted">{pct(r.wStar, 1)}</td>
                   <td className="num px-2 py-1.5 text-right">{pct(r.w, 1)}</td>
                   <td className="num px-2 py-1.5 text-right">{r.tgtShares}</td>
                   <td className={clsx("num px-2 py-1.5 text-right font-semibold", r.trade > 0 ? "text-up" : r.trade < 0 ? "text-down" : "text-faint")}>

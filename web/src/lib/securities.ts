@@ -160,3 +160,41 @@ export const useLists = create<ListsState>((set, get) => ({
     set({ cash });
   },
 }));
+
+// ----------------------------------------------------------------------------- paper-trading account
+// An external paper-trading run may export one account to demo-data/paper_holdings.json (git-ignored;
+// fields as in PaperAccount). When the file exists and its version is new, it replaces the holdings and cash
+// above; edits made in the browser stay until the account trades again.
+export interface PaperAccount {
+  version: string;
+  label: string;
+  opened: string;
+  last_trade: string;
+  valued: string;
+  capital: number;
+  nav: number;
+  cash: number;
+  holdings: Holding[];
+}
+
+export const usePaper = create<{ paper: PaperAccount | null }>(() => ({ paper: null }));
+
+export async function syncPaperAccount(force = false): Promise<PaperAccount | null> {
+  try {
+    const r = await fetch("/demo-data/paper_holdings.json", { cache: "no-store" });
+    if (!r.ok) return null;
+    const p = (await r.json()) as PaperAccount;        // the dev server answers a missing file with HTML: JSON fails
+    if (!p?.holdings?.length) return null;
+    usePaper.setState({ paper: p });
+    if (force || read<string>("defaco.paper.version", "") !== p.version) {
+      useLists.getState().setHoldings(p.holdings);
+      useLists.getState().setCash(p.cash);
+      write("defaco.paper.version", p.version);
+    }
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+if (typeof window !== "undefined") void syncPaperAccount();

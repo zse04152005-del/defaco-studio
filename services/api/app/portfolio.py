@@ -10,6 +10,14 @@ request then fits one risk model on the 250-day window and solves the long-only 
 
 The response has the same shape as one entry of ``web/public/demo-data/portfolio.json``
 ``models[...]`` (plus ``asof``, ``universe_size``, ``constraints``, ``corr`` and timing).
+
+    POST /api/portfolio/rebalance   (the 调仓 page)
+    {...the optimize fields..., "holdings": [{"code", "shares"}], "cash": 200000,
+     "prices": {"600519.SH": 1450.0} | null, "frozen_buy": [...], "frozen_sell": [...]}
+
+turns the continuous target into whole-lot holdings with ``quantkit.optim.lots.lot_portfolio``: from an empty
+account spending may be 90%-110% of the cash; otherwise at most the account value, starting from the current
+holdings, with each lot's fees charged against the risk it removes (so lot rounding alone never trades).
 """
 from __future__ import annotations
 
@@ -30,6 +38,7 @@ from quantkit.features.characteristics import ALL_CHARS
 from quantkit.ipca import CharacteristicPanel
 from quantkit.data.sw import sw_name
 from quantkit.optim.allocators import bayes_stein_mean, hrp, mean_variance, risk_parity
+from quantkit.optim.lots import fee, lot_portfolio
 from quantkit.optim.minvar import Constraints, min_variance
 from quantkit.pipeline import load_panel
 from quantkit.riskmodels import CovarianceRepr, RiskModelInput, build
@@ -242,6 +251,103 @@ class PortfolioEngine:
                           "total": round((time.perf_counter() - t0) * 1e3)},
         })
         return out
+
+
+    # ------------------------------------------------------------------ whole-lot rebalance
+    def rebalance(self, holdings: list[dict], cash: float, prices: dict[str, float] | None = None,
+                  frozen_buy: list[str] | None = None, frozen_sell: list[str] | None = None, **opt) -> dict:
+        """Order list that takes the account to the best whole-lot holdings for the optimiser's target."""
+        t0 = time.perf_counter()
+        opt["compare"] = False
+        r = self.optimize(**opt)
+        d = pd.Timestamp(r["asof"])
+        w_star = pd.Series({x["code"]: x["w"] for x in r["weights"]}, dtype=float)
+        uni, _ = self.universe(d, opt.get("universe"))
+        held = {}
+        for h in holdings:
+            c, n = str(h["code"]).strip().upper(), int(h.get("shares", 0))
+            if n > 0:
+                held[c] = held.get(c, 0) + n
+        known = set(self.panel.codes)
+        outside = {c: n for c, n in held.items() if c not in known}      # no research data: kept as they are
+        codes = list(dict.fromkeys([*uni, *(c for c in held if c in known)]))
+        px = self.panel.close.loc[d].reindex(codes).astype(float)
+        for c, v in (prices or {}).items():
+            if c in px.index and v and v > 0:
+                px[c] = float(v)
+        nb = set(frozen_buy or []) | set(px.index[~(px > 0)])
+        ns = set(frozen_sell or []) | set(px.index[~(px > 0)])
+        px = px.fillna(0.0)
+        try:
+            cov, _ = self.covariance(opt.get("model", "pca_factor"), d, codes)
+        except Exception as e:  # noqa: BLE001  (a held stock the model cannot fit, e.g. long suspended)
+            log.warning("covariance on held stocks failed (%s); held stocks outside the universe are frozen", e)
+            extra = [c for c in codes if c not in uni]
+            nb |= set(extra); ns |= set(extra)
+            cov, _ = self.covariance(opt.get("model", "pca_factor"), d, uni)
+        M = cov.as_frame().reindex(index=codes, columns=codes).to_numpy(float)
+        miss = np.where(np.isnan(np.diag(M)))[0]
+        fill = float(np.nanmedian(np.diag(M)))
+        M = np.nan_to_num(M)
+        M[miss, miss] = fill
+        S = 252.0 * M
+        ind = self.industries(d, codes)
+        cur = pd.Series({c: held.get(c, 0) for c in codes}, dtype=float)
+        out_value = sum(n * float((prices or {}).get(c, 0) or 0) for c, n in outside.items())
+        value = float(cash) + float((cur * px).sum())
+        opening = cur.sum() == 0
+        if value <= 0:
+            raise OptimizeError("账户总资产为 0：请先填写可用现金或持仓")
+        objective = opt.get("objective", "minvar")
+        res = lot_portfolio(codes, S, px, value, w_star, opt.get("max_weight", 0.10), ind,
+                            ind_cap=opt.get("industry_cap") or 1.0, lo=0.90, hi=1.10 if opening else 1.0,
+                            track=objective != "minvar", current=None if opening else cur, no_buy=nb, no_sell=ns)
+        tgt = res.shares.astype(int)
+        invested = float((tgt * px).sum())
+
+        def vol(sh: pd.Series) -> float | None:
+            v = (sh * px).to_numpy(float)
+            return float(math.sqrt(max(v @ S @ v, 0))) / v.sum() if v.sum() > 0 else None
+
+        ws = w_star.reindex(codes).fillna(0.0).to_numpy()
+        rows, buys, sells, commission, stamp = [], 0.0, 0.0, 0.0, 0.0
+        for c in codes:
+            n0, n1 = int(cur[c]), int(tgt[c])
+            if n0 == 0 and n1 == 0 and w_star.get(c, 0.0) <= 1e-6:
+                continue
+            trade, p = n1 - n0, float(px[c])
+            amt = trade * p
+            if trade > 0:
+                buys += amt
+                commission += fee(amt, "buy")
+            elif trade < 0:
+                sells -= amt
+                f = fee(-amt, "sell")
+                stamp += -amt * 5e-4
+                commission += f - (-amt * 5e-4)
+            rows.append({"code": c, "name": self.names.get(c, c), "industry": str(ind.get(c, "")), "price": round(p, 3),
+                         "held": n0, "target_shares": n1, "trade": trade, "value": round(amt, 2),
+                         "w_cur": n0 * p / value, "w_star": float(w_star.get(c, 0.0)),
+                         "w_after": n1 * p / invested if invested > 0 else 0.0,
+                         "freeze": "buy" if c in nb and c not in ns else ("sell" if c in ns and c not in nb else ("both" if c in nb else None))})
+        for c, n in outside.items():
+            rows.append({"code": c, "name": c, "industry": "", "price": float((prices or {}).get(c, 0) or 0), "held": n,
+                         "target_shares": n, "trade": 0, "value": 0.0, "w_cur": 0.0, "w_star": 0.0, "w_after": 0.0, "freeze": "nodata"})
+        rows.sort(key=lambda x: (-abs(x["value"]), -x["w_after"]))
+        cash_after = value - invested - commission - stamp
+        return {
+            "asof": r["asof"], "label": r.get("label", opt.get("model")), "model": opt.get("model"), "objective": objective,
+            "mode": "opening" if opening else "rebalance", "rows": rows,
+            "summary": {"nav": value + out_value, "invested": invested, "buys": buys, "sells": sells, "commission": commission,
+                        "stamp": stamp, "cash_after": cash_after, "extra_capital": max(0.0, -cash_after),
+                        "turnover": (buys + sells) / value, "spend_ratio": res.spend_ratio, "n_orders": sum(1 for x in rows if x["trade"]),
+                        "n_holdings": int((tgt > 0).sum()), "vol_before": None if opening else vol(cur), "vol_after": vol(tgt),
+                        "vol_target": float(math.sqrt(max(ws @ S @ ws, 0))), "te": res.te, "moves": res.moves},
+            "notes": [("开仓：花费可在资金的 90%–110% 之间，选预测风险最低的整手组合" if opening else
+                       "调仓：从当前持仓出发逐手调整，每一手的费用计入目标，只有降低的风险值得付出的费用时才交易"),
+                      *(["无研究数据的持仓保持不动：" + "、".join(outside)] if outside else [])],
+            "timing_ms": {"total": round((time.perf_counter() - t0) * 1e3)},
+        }
 
 
 def _check_feasible(n: int, ind: pd.Series, max_weight: float, industry_cap: float | None) -> None:

@@ -17,5 +17,6 @@ web/node_modules/
 # the paper lab's data and figures, the DeFaCo fallback portfolio and the lab export script with its findings
 web/public/demo-data/lab.json
 web/public/demo-data/portfolio_defaco.json
+web/public/demo-data/paper_holdings.json
 web/public/figures/
 scripts/export_lab.py

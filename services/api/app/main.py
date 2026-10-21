@@ -357,6 +357,37 @@ async def portfolio_optimize(req: OptimizeRequest):
         raise HTTPException(e.status, str(e)) from e
 
 
+class Holding(BaseModel):
+    code: str = Field(max_length=12)
+    shares: int = Field(ge=0)
+
+
+class RebalanceRequest(OptimizeRequest):
+    compare: bool = False
+    holdings: list[Holding] = Field(default_factory=list, max_length=500)
+    cash: float = Field(0.0, ge=0)
+    prices: dict[str, float] | None = None          # live quotes from the page; the last close otherwise
+    frozen_buy: list[str] = Field(default_factory=list, max_length=1000)    # limit-up / suspended
+    frozen_sell: list[str] = Field(default_factory=list, max_length=1000)   # limit-down / suspended
+
+
+@app.post("/api/portfolio/rebalance")
+async def portfolio_rebalance(req: RebalanceRequest):
+    """Whole-lot order list for the 调仓 page (see app.portfolio.PortfolioEngine.rebalance)."""
+    if pf is None and pf_task is not None:
+        try:
+            await asyncio.wait_for(asyncio.shield(pf_task), timeout=60)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(503, f"研究数据未就绪：{e!r}") from e
+    if pf is None:
+        raise HTTPException(503, "组合引擎未启动")
+    body = req.model_dump()
+    try:
+        return await asyncio.to_thread(pf.rebalance, **body)
+    except OptimizeError as e:
+        raise HTTPException(e.status, str(e)) from e
+
+
 @app.websocket("/ws/quotes")
 async def ws_quotes(ws: WebSocket):
     await ws.accept()
